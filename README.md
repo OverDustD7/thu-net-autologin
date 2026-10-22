@@ -11,9 +11,26 @@
 
 > 许可证 MIT。这个工具只做一件事：把你的校园网账号送到学校自己的认证接口上。它不代理流量、不改系统代理、不动别人的计划任务。
 
-## 三步快速开始
+## 快速开始（双击一个脚本）
 
-在**你自己的** PowerShell 窗口里，`cd` 到这个目录：
+把整个仓库目录拷到目标机器上，**双击 `Setup-ThuNetAutoLogin.cmd`** 就行。它会一口气做完：
+
+1. 问你的**学号**和**校园网口令**（口令输入不回显，存法见下文）；
+2. 注册「登录时自动启动」的计划任务；
+3. **立刻把看守启动起来**，不用等下次登录；
+4. 当场验证并打印结论：任务在不在、看守进程在不在、链路通不通。
+
+想先看它会做什么、不实际改动任何东西：
+
+```
+Setup-ThuNetAutoLogin.cmd -WhatIf
+```
+
+以后**改了校园网口令**，双击 `Change-ThuNetCredential.cmd`（详见下文「改了口令或账号之后」）。
+
+### 想手动做 / 用命令行
+
+在**你自己的** PowerShell 窗口里，`cd` 到这个目录，下面的三步与上面等价：
 
 **第 1 步 · 存账号**（会交互式问你账号和口令，口令输入不回显）
 
@@ -55,6 +72,8 @@ schtasks /run /tn ThuNet-Login
 
 | 命令 | 干什么 |
 |---|---|
+| `Setup-ThuNetAutoLogin.cmd` | **双击入口**：存凭据 → 装任务 → 立刻启动 → 验证。幂等，可重复运行；加 `-WhatIf` 只看不做 |
+| `Change-ThuNetCredential.cmd` | **改了校园网口令就双击这个**：重输凭据 → 重启看守 → 当场验证一次登录 |
 | `.\ThuNet-Login.ps1 -Status` | 只读：报账号、链路状态、识别到的 ac_id、绑定的本机地址。不写日志、不登录 |
 | `.\ThuNet-Login.ps1 -SelfTest` | 只读：拿一组固定测试向量验 srun SRBX1 编码器，不联网。换机器/换 PowerShell 版本后先跑这个 |
 | `.\ThuNet-Login.ps1 -Once` | 登录一次（链路已经通就什么都不做） |
@@ -95,6 +114,18 @@ DPAPI 加密的事实：
 登录脚本 `ThuNet-Login.ps1` **只读凭据，从不写**。整个仓库里唯一会写凭据的是 `Set-ThuNetCredential.ps1`。凭据缺失时登录脚本只会让你去跑那个脚本。
 
 兼容旧目录：`-CredentialDir` 指到一个用别的名字存过凭据的目录时，除了 `ThuNet-*.txt` / `ThuNet-*.dpapi`，也会认 `portal-user.txt` / `portal-pass.dpapi` 这两个旧名字（只读，不会往旧名字上写）。
+
+## 改了校园网口令或账号之后
+
+双击 **`Change-ThuNetCredential.cmd`**（等价于 `Setup-ThuNetAutoLogin.ps1 -ForceCredential`）：重输账号与口令 → 覆盖凭据文件 → 重启看守 → **当场做一次真实登录并打印结果**。
+
+不需要重启机器，也不需要重装计划任务：
+
+- 看守**每一轮都重新读凭据文件**（没有内存缓存），所以新口令在下一个轮询周期（默认 60 秒）内就生效；
+- 凭据文件一旦被改写，看守会**清空失败计数与退避窗口**——否则改完口令还要等旧口令挣来的退避，看起来就像「工具没理我」；
+- 但写文件不等于改好了，所以这条路径会当场登录一次：**只有它成功才算完成**。
+
+**如果口令改了却忘了更新这里**（你在门户改了密码，这台机器还留着旧的）：看守不会无限硬试。同一个接口**前两次失败各等 5 分钟，连续第 3 次起升到 30 分钟**，并在第 3 次时往日志里单独写一行，明确提示用 `Set-ThuNetCredential.ps1` / `Change-ThuNetCredential.cmd` 更新口令。这条退避的意义是**不拿你的机器去撞门户的失败计数**。
 
 ## 安装脚本到底装了什么
 
@@ -189,7 +220,7 @@ Get-Content "$env:LOCALAPPDATA\ThuNetAutoLogin\logs\thunet-login.log" -Tail 30
 - 任务「上次运行结果」非 0：多半是路径里有空格但引号没包好，或者 `RunHidden.vbs` 不在原处了。
 - 日志里是 `no credential found`：跑 `Set-ThuNetCredential.ps1`。**注意凭据目录要对上**——如果你当初用 `-CredentialDir` 存到了别处，安装时也要带同样的 `-CredentialDir`，否则任务会用默认目录、找不到凭据。
 - 日志里是 `no usable interface address`：见上面那条。
-- 日志停在 `blocked-backing-off`：某个网卡连续失败，脚本对它 **5 分钟才重试一次**（防止一个永远不通的口每分钟发一次登录请求）。这是设计行为，不是卡死。
+- 日志里是 `blocked-backing-off(300s)` 或 `blocked-backing-off(1800s)`：某个网卡连续登录失败，脚本正在退避（防止一个永远不通的口每分钟发一次登录请求）。**前两次失败各等 5 分钟，连续第 3 次起等 30 分钟**，第 3 次时会单独写一行提示口令可能已改。这是设计行为，不是卡死；**更新了口令就会被立刻清空**（见「改了校园网口令或账号之后」）。
 
 ## 关于 `.ps1` 必须是纯 ASCII
 
@@ -216,6 +247,9 @@ Get-Content "$env:LOCALAPPDATA\ThuNetAutoLogin\logs\thunet-login.log" -Tail 30
 
 | 文件 | 作用 |
 |---|---|
+| `Setup-ThuNetAutoLogin.cmd` | **双击入口**：跑 `Setup-ThuNetAutoLogin.ps1`，跑完停住让你看结果 |
+| `Setup-ThuNetAutoLogin.ps1` | 一键端到端：凭据 → 注册任务 → 立刻启动 → 验证。幂等 |
+| `Change-ThuNetCredential.cmd` | 改了口令后双击：等于 `Setup-ThuNetAutoLogin.ps1 -ForceCredential` |
 | `ThuNet-Login.ps1` | 主脚本。登录 + 看守。入口：`-Once` / `-Watch` / `-MaxRuns` / `-Status` / `-SelfTest` / `-TestLogin` / `-CredentialDir` / `-LogDir` / `-IntervalSeconds` |
 | `Set-ThuNetCredential.ps1` | **本仓库唯一的凭据写入者**。交互式存账号与 DPAPI 口令；`-Show` / `-Remove` |
 | `ThuNet-Probe.ps1` | 持续探测门户拦截并记录现场。`-Watch`（默认 120 秒）/ `-MaxRuns` / `-LogDir` |

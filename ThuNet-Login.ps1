@@ -164,6 +164,12 @@ function Write-Log([string]$msg) {
 # the source address is what makes the check and the login actually mean the wired link.
 $script:Candidates  = @()
 $script:LastAttempt = @{}
+# Consecutive login failures per interface address, plus the credential files' last-write stamp.
+# Both exist for the same scenario: the account password was changed at the portal but not here.
+# The counters make the watcher back off instead of hammering the portal, and the stamp makes a
+# corrected password take effect on the very next cycle instead of after that backoff.
+$script:FailCount = @{}
+$script:CredStamp = ''
 function Get-WiredAddress {
     # Build the candidate list from .NET instead of from `netsh`.
     #
@@ -655,9 +661,47 @@ function Invoke-PortalLogin {
 # candidate can be fine while another is blocked (WiFi up, wall port still waiting for the portal).
 # A candidate that keeps failing is retried at most once every five minutes: a permanently dead
 # wall port must not turn into a login request every single minute.
+# How long to wait before trying this interface again.  The first failures get the short window: a
+# portal that was briefly down, or a wall port that was just replugged, recovers inside it.  Once the
+# SAME interface has failed several times in a row the cause is usually not transient - a password
+# that was changed at the portal and not here is the common one - so the long window applies.
+# The portal counts failed attempts, so a short window costs a machine that hammers it all night and
+# a long one costs a slower recovery.  3 failures in a row -> 5 min each (15 min), then 30 min each.
+function Get-LoginBackoffSeconds {
+    param([int]$ConsecutiveFailures)
+    if ($ConsecutiveFailures -ge 3) { return 1800 }
+    return 300
+}
+
+# Last-write stamp of either credential file.  Repair-Once compares it with the previous cycle; a
+# change means the old failures were probably earned by the old password and must not hold the next
+# attempt back.  Set-ThuNetCredential.ps1 (and Change-ThuNetCredential.cmd, which calls it) rewrites
+# these files, so this is what makes "I changed the password" visible to a watcher already running.
+function Get-CredentialStamp {
+    $stamp = ''
+    foreach ($f in @($script:UserFile, $script:PassFile)) {
+        if (Test-Path $f) {
+            try { $stamp += (Get-Item $f).LastWriteTimeUtc.Ticks.ToString() } catch { $stamp += '?' }
+        } else { $stamp += '-' }
+        $stamp += '|'
+    }
+    return $stamp
+}
+
 function Repair-Once {
     if (-not $script:Candidates -or $script:Candidates.Count -eq 0) { [void](Get-WiredAddress) }
     if (-not $script:Candidates -or $script:Candidates.Count -eq 0) { return 'no usable interface address - nothing to do' }
+
+    # Two file timestamps, checked once per cycle: if the credential was rewritten, drop what the old
+    # credential earned.  Without this, fixing the password would still wait out a backoff earned by
+    # the wrong one - which reads as "the tool ignored the new password".
+    $stamp = Get-CredentialStamp
+    if ($script:CredStamp -and $script:CredStamp -ne $stamp) {
+        $script:FailCount.Clear()
+        $script:LastAttempt.Clear()
+        Write-Log 'credential files changed - failure counters and backoff cleared'
+    }
+    $script:CredStamp = $stamp
 
     $notes = @()
     $blocked = @()
@@ -668,10 +712,13 @@ function Repair-Once {
         if (-not (Test-CredentialPresent)) { return 'no credential - run Set-ThuNetCredential.ps1' }
 
         $tag = '{0}={1}' -f $c.Name, $c.IP
+        $fails = 0
+        if ($script:FailCount.ContainsKey($c.IP)) { $fails = [int]$script:FailCount[$c.IP] }
+        $window = Get-LoginBackoffSeconds -ConsecutiveFailures $fails
         $last = $script:LastAttempt[$c.IP]
-        if ($last -and ((New-TimeSpan -Start $last -End (Get-Date)).TotalSeconds -lt 300)) {
+        if ($last -and ((New-TimeSpan -Start $last -End (Get-Date)).TotalSeconds -lt $window)) {
             $blocked += $tag
-            $notes += ($tag + ':blocked-backing-off')
+            $notes += ('{0}:blocked-backing-off({1}s)' -f $tag, $window)
             continue
         }
         $script:LastAttempt[$c.IP] = Get-Date
@@ -680,13 +727,23 @@ function Repair-Once {
         Start-Sleep -Seconds 3
         if ($ok -and (Test-LinkOnline)) {
             $script:LastAttempt.Remove($c.IP)
+            [void]$script:FailCount.Remove($c.IP)
             $notes += ($tag + ':logged-in')
-        } elseif ($ok) {
-            $blocked += $tag
-            $notes += ($tag + ':portal-ok-but-still-blocked')
         } else {
             $blocked += $tag
-            $notes += ($tag + ':login-failed')
+            $script:FailCount[$c.IP] = $fails + 1
+            if ($ok) {
+                $notes += ($tag + ':portal-ok-but-still-blocked')
+            } else {
+                $notes += ($tag + ':login-failed')
+            }
+            # A run of failures on one address is the shape a changed-but-not-updated password makes.
+            # Say it in the log at the point where it becomes the likely explanation, and name the
+            # fix: a bare "login-failed" line is what leaves someone staring at a headless machine
+            # wondering why it never came back.
+            if (($fails + 1) -eq 3) {
+                Write-Log ('login has failed 3 times in a row on {0}; backing off to 30 minutes. If the account password was changed, store the new one with Set-ThuNetCredential.ps1 (or Change-ThuNetCredential.cmd) - the watcher uses it on the next cycle.' -f $tag)
+            }
         }
     }
     if ($blocked.Count -eq 0) {
