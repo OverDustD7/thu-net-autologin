@@ -1,0 +1,20 @@
+# .gitattributes for thu-net-autologin
+#
+# Windows-only tooling: every file is text, and the scripts must survive a clone on any platform.
+#
+# The scripts are pure ASCII with no BOM, and they are read by PowerShell 5.1, which decodes a
+# BOM-less file as ANSI.  Git's default autocrlf behaviour would quietly rewrite the line endings
+# on checkout; marking them "text" keeps that explicit and uniform instead of depending on each
+# cloner's local core.autocrlf setting.  Nothing here re-encodes a file, so the ASCII-only rule
+# still depends on editors being told not to add a BOM (see the README section on that).
+
+* text=auto eol=crlf
+
+*.ps1  text eol=crlf
+*.vbs  text eol=crlf
+*.md   text eol=lf
+*.yml  text eol=lf
+
+# Scripts are ASCII only.  Marking the diff text keeps `git diff` readable rather than guessing.
+*.ps1  diff
+*.vbs  diff
