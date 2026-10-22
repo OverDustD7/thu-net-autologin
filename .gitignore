@@ -1,0 +1,50 @@
+# .gitignore for thu-net-autologin
+#
+# Design rule: ignore things by their EXACT run-time names, never by a loose glob that could also
+# match a file the repository legitimately needs to track.  A pattern like "*user.txt" would have
+# been the obvious shortcut and is exactly the kind of rule that silently swallows a real file
+# later; every pattern below names a concrete artifact this tool actually creates.
+
+# ---- credentials ---------------------------------------------------------------
+# Custody of these belongs to the user's own %LOCALAPPDATA%, never to a checkout.  They are
+# ignored by exact name in case someone points -CredentialDir at the repository directory itself.
+ThuNet-user.txt
+ThuNet-pass.dpapi
+portal-user.txt
+portal-pass.dpapi
+
+# Any DPAPI blob, whatever it was named.
+*.dpapi
+
+# Generic backstops for hand-made copies.  These are patterns the repository has no file matching,
+# so they cannot bite a tracked file.
+*credential*.txt
+*secret*.txt
+
+# ---- machine-local state -------------------------------------------------------
+# The learned ac_id is specific to the wall port this machine is plugged into and is re-learned
+# automatically, so it must never be shared through the repository.
+ThuNet-ac_id.txt
+ac_id.txt
+portal-acid.txt
+
+# ---- logs and capture dumps ----------------------------------------------------
+*.log
+thunet-probe-capture.txt
+thunet-login*.txt
+thunet-probe*.txt
+
+# ---- runtime directories -------------------------------------------------------
+# Relative and therefore anchored at the repository root; this deliberately does NOT ignore a
+# "docs/logs/" style directory elsewhere in the tree.
+creds/
+logs/
+state/
+
+# ---- editor and OS noise -------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
