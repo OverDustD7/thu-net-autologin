@@ -89,6 +89,7 @@ schtasks /run /tn ThuNet-Login
 - `-CredentialDir <路径>`：凭据目录。默认 `%LOCALAPPDATA%\ThuNetAutoLogin\creds`。
 - `-LogDir <路径>`：日志目录。默认 `%LOCALAPPDATA%\ThuNetAutoLogin\logs`。
 - `-IntervalSeconds <秒>`：watch 间隔。
+- `-RunLevel LeastPrivilege`（默认）/ `HighestAvailable`：任务用普通令牌还是完整令牌。**这两个是 XML 里的写法**；PowerShell cmdlet 里对应的词是 `Limited` / `Highest`——两者不是一套词表，写错会得到 `The task XML contains a value which is incorrectly formatted or out of range`。脚本两种拼写都收，XML 里落的永远是 schema 的值。
 
 ## 凭据是怎么存的（换机器一定要看这段）
 

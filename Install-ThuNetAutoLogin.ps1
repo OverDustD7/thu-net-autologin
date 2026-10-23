@@ -15,7 +15,7 @@
 #
 #   The task is registered with the CURRENT USER's token (LogonType InteractiveToken), which is the
 #   only way the DPAPI-encrypted password can be decrypted at run time.  Because of that this script
-#   does NOT need to run elevated for a normal per-user task - pass -RunLevel Highest and run it
+#   does NOT need to run elevated for a normal per-user task - pass -RunLevel HighestAvailable and run it
 #   from an elevated prompt only if you specifically want the task to have the full token.
 #
 # THE ACTION IS ALWAYS wscript.exe -> RunHidden.vbs -> powershell.exe.  Never a bare powershell.exe
@@ -30,7 +30,7 @@
 #   Install-ThuNetAutoLogin.ps1 -Force             replace an existing task without asking
 #   Install-ThuNetAutoLogin.ps1 -IntervalSeconds 30
 #   Install-ThuNetAutoLogin.ps1 -CredentialDir <path> -LogDir <path>
-#   Install-ThuNetAutoLogin.ps1 -RunLevel Highest  (run this from an elevated prompt)
+#   Install-ThuNetAutoLogin.ps1 -RunLevel HighestAvailable  (run this from an elevated prompt)
 
 param(
     [string]$TaskName = 'ThuNet-Login',
@@ -39,7 +39,7 @@ param(
     [switch]$WithProbe,
     [switch]$WhatIf,
     [switch]$Force,
-    [ValidateSet('Limited','HighestAvailable')][string]$RunLevel = 'Limited',
+    [ValidateSet('LeastPrivilege','HighestAvailable','Limited','Highest')][string]$RunLevel = 'LeastPrivilege',
     [string]$CredentialDir,
     [string]$LogDir,
     # The time of the daily safety-net trigger.  A logon trigger does not fire on resume from

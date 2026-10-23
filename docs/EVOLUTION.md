@@ -153,3 +153,28 @@ INFO      = {SRBX1}p8xUmld+RE/Cb91zUrYlD1H0jO/gK2dIcZPtSuLyMgzdj0wI7PiOXqjFYDi9Q
 2. **连续失败退避升级**：同一接口前两次失败各等 5 分钟，连续第 3 次起等 30 分钟，并在第 3 次时单独写一行日志，明确指出「若口令已改，用 `Set-ThuNetCredential.ps1` / `Change-ThuNetCredential.cmd` 更新」。动机是**门户会计数失败尝试**——口令改错时不该用每天 288 次的频率去撞它。5 分钟那一档留给短暂故障（门户维护、网口刚插上），那类问题恢复得比 30 分钟快。
 
 这两条都做过真机验证：`Get-LoginBackoffSeconds` 按 AST 从交付文件里抽出来直接调用（1、2 次 → 300 秒，3 次起 → 1800 秒），`Get-CredentialStamp` 在同一目录下能感知文件被改写；`Repair-Once` 内部「先清空、后算窗口」的顺序也用 AST 核对过。
+
+## 10. 一个只在真机注册时才暴露的 bug：`RunLevel` 不是一套词（2026-10-23）
+
+用户在笔记本上双击 Setup，第 2 步失败：
+
+```
+错误: 任务 XML 包含格式不正确或超出范围的值。
+(22,27):RunLevel:Limited
+```
+
+`schtasks` 自己把元素名、行、列都点出来了。根因：**PowerShell cmdlet 的词表和 XML 枚举不是一套词**。`New-ScheduledTaskPrincipal -RunLevel` 收 `Limited` / `Highest`，而 `<RunLevel>` 元素只接受 `LeastPrivilege` / `HighestAvailable`。模板里直接写了 cmdlet 那个词，schema 校验就拒绝了。
+
+**为什么之前没暴露**：这条路径当时只做到「组件级验证」——XML 用 .NET `XmlDocument` 解析过，但**格式良好不等于符合 schema**；而为了不在一台已有看守的机器上多注册任务，从头到尾没有真跑过 `schtasks /create`。**没有真注册，就没有真校验**——这是当时明确记录过的代价，这次如期兑现。
+
+**修法**：`ThuNet-TaskXml.ps1` 收两种拼写，XML 里永远落 schema 的值；`Install-` / `Setup-` 的 `-RunLevel` 取值集与默认值同步（默认 `LeastPrivilege`）。顺带改掉 Setup 里那句会把人带偏的提示：它原来建议「报错提到访问就改用管理员重跑」，而这个报错根本不是权限问题。
+
+**可复用的验证手法（不注册任何任务）**：Task Scheduler 的 COM 接口 `Schedule.Service` → `NewTask(0)` → 给 `XmlText` 赋值。**`put_XmlText` 会按真正的 schema 校验**，不通过就抛错，但它不注册任何东西。用它复现了上面那条逐字符相同的报错，也验证了修好之后的 XML：
+
+```
+as generated (RunLevel=Limited)   REJECTED -> (22,27):RunLevel:Limited
+RunLevel=LeastPrivilege           ACCEPTED
+RunLevel=HighestAvailable         ACCEPTED
+```
+
+**教训（可复用）**：只要产出物要被某个外部校验器（`schtasks`、注册表、编译器、schema）检查，就必须让**那个校验器**看过；用别的解析器「解析通过」不能替代。

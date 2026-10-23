@@ -35,6 +35,7 @@
 #   Setup-ThuNetAutoLogin.ps1 -ForceCredential      ask for account and password again
 #   Setup-ThuNetAutoLogin.ps1 -WithProbe            also install the diagnostic probe
 #   Setup-ThuNetAutoLogin.ps1 -IntervalSeconds 30   how often the watcher re-checks the link
+#   Setup-ThuNetAutoLogin.ps1 -RunLevel HighestAvailable   full token (run this elevated)
 
 param(
     [switch]$WhatIf,
@@ -44,7 +45,7 @@ param(
     [string]$CredentialDir,
     [string]$LogDir,
     [string]$DailyAt = '09:00',
-    [ValidateSet('Limited','HighestAvailable')][string]$RunLevel = 'Limited',
+    [ValidateSet('LeastPrivilege','HighestAvailable','Limited','Highest')][string]$RunLevel = 'LeastPrivilege',
     [string]$TaskName = 'ThuNet-Login',
     [string]$ProbeTaskName = 'ThuNet-Probe'
 )
@@ -187,7 +188,10 @@ $rcInstall = Invoke-Sibling $InstallPs1 $instArgs
 if ($rcInstall -ne 0 -and -not $WhatIf) {
     Say ''
     Say ('Registering the task failed (exit code ' + $rcInstall + '). Nothing further was done.')
-    Say 'Re-run the same command as administrator if the error above mentions access.'
+    Say 'Those lines are schtasks output. A complaint about access or a permission problem means'
+    Say 'this needs an elevated PowerShell. A "value is incorrectly formatted or out of range"'
+    Say 'complaint names the element and XML line - that is a bug in this repository, not in what'
+    Say 'you did, and the same line tells which value to report.'
     exit 1
 }
 

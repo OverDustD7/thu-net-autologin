@@ -23,7 +23,7 @@ function New-ThuNetTaskXml {
         [string]$UserId,
         [switch]$AtLogon,
         [string]$AtTime,
-        [ValidateSet('Limited','HighestAvailable')][string]$RunLevel = 'Limited'
+        [ValidateSet('LeastPrivilege','HighestAvailable','Limited','Highest')][string]$RunLevel = 'LeastPrivilege'
     )
 
     # wscript.exe is the launcher whenever the hidden-VBS shim is available: it asks Windows for
@@ -57,6 +57,19 @@ function New-ThuNetTaskXml {
         # DOMAIN\user, as schtasks expects it in a Principal UserId.
         $UserId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     }
+
+    # The PowerShell cmdlet vocabulary and the XML enum are NOT the same words, and schtasks
+    # validates the XML against the Task Scheduler schema.  Feeding it the cmdlet word gets you
+    #     ERROR: The task XML contains a value which is incorrectly formatted or out of range.
+    #     (22,27):RunLevel:Limited
+    # - the element and the line are named, which is the whole diagnosis.  Get-ScheduledTask and
+    # New-ScheduledTaskPrincipal call the levels "Limited"/"Highest"; the <RunLevel> element accepts
+    # only "LeastPrivilege"/"HighestAvailable".  Both spellings are accepted here and the XML always
+    # gets the schema value.  (This shipped wrong once: the XML had been checked with an XML parser,
+    # which proves well-formedness and NOT schema validity, and no task had ever been registered, so
+    # no real validator had looked at it.)
+    $xmlRunLevel = 'LeastPrivilege'
+    if ($RunLevel -eq 'HighestAvailable' -or $RunLevel -eq 'Highest') { $xmlRunLevel = 'HighestAvailable' }
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-16"?>')
@@ -92,7 +105,7 @@ function New-ThuNetTaskXml {
     [void]$sb.AppendLine('    <Principal id="Author">')
     [void]$sb.AppendLine('      <UserId>' + (Esc $UserId) + '</UserId>')
     [void]$sb.AppendLine('      <LogonType>InteractiveToken</LogonType>')
-    [void]$sb.AppendLine('      <RunLevel>' + $RunLevel + '</RunLevel>')
+    [void]$sb.AppendLine('      <RunLevel>' + $xmlRunLevel + '</RunLevel>')
     [void]$sb.AppendLine('    </Principal>')
     [void]$sb.AppendLine('  </Principals>')
     [void]$sb.AppendLine('  <Settings>')
