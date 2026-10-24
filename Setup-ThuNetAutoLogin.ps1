@@ -232,6 +232,55 @@ if ($WhatIf) {
     Say '                     and has not come up yet. Inspect the newest log file listed below.'
 }
 
+# Prove the credential actually gets this machine online.  The first version only ran -Status
+# (read-only) here, so a run could print "Done" while the machine was still offline - reported
+# 2026-10-24: after changing the password nothing connected, and it only came up when -TestLogin was
+# run by hand.  Saving a credential is NOT the same as proving it works, and "the watcher is
+# running" is not the same either.  The only honest check is a real 204 probe, before and after.
+if (-not $WhatIf) {
+    Say ''
+    Say '   verifying the link (runs a real login if the machine is offline):'
+    $probeOnline = $false
+    try {
+        $probeReq = [System.Net.WebRequest]::Create('http://connect.rom.miui.com/generate_204')
+        $probeReq.Proxy = $null
+        $probeReq.Timeout = 8000
+        $probeResp = $probeReq.GetResponse()
+        $probeOnline = ([int]$probeResp.StatusCode -eq 204)
+        $probeResp.Close()
+    } catch { $probeOnline = $false }
+
+    if ($probeOnline) {
+        Say '      already online - no login needed (this means the credential was NOT exercised)'
+    } else {
+        Say '      OFFLINE - running ThuNet-Login.ps1 -Once'
+        $onceArgs = @('-Once', '-CredentialDir', $CredentialDir, '-LogDir', $LogDir)
+        $onceOut = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $LoginPs1 @onceArgs 2>&1
+        foreach ($line in @($onceOut)) { Say ('      ' + [string]$line) }
+        Start-Sleep -Seconds 3
+        # Re-probe rather than trusting the login's own verdict: the script reports what the portal
+        # answered, and that is not the same as this machine getting out.
+        $probeOnline2 = $false
+        try {
+            $probeReq2 = [System.Net.WebRequest]::Create('http://connect.rom.miui.com/generate_204')
+            $probeReq2.Proxy = $null
+            $probeReq2.Timeout = 8000
+            $probeResp2 = $probeReq2.GetResponse()
+            $probeOnline2 = ([int]$probeResp2.StatusCode -eq 204)
+            $probeResp2.Close()
+        } catch { $probeOnline2 = $false }
+        if ($probeOnline2) {
+            Say '      now online - the stored credential works'
+        } else {
+            Say '      STILL OFFLINE - treat this as a FAILURE of this run:'
+            Say '        * the password is probably wrong (note: the srun portal password is NOT the'
+            Say '          Tsinghua-secure WiFi password), or'
+            Say '        * this wall port needs one manual browser login first.'
+            Say '      Re-run this script with the correct password, or check the log below.'
+        }
+    }
+}
+
 $statusArgs = @('-Status', '-CredentialDir', $CredentialDir, '-LogDir', $LogDir)
 Say '   link status (read-only):'
 $statusOut = @()

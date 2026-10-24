@@ -121,12 +121,41 @@ if (-not $account) { Write-Host 'No account given, nothing stored.'; exit 1 }
 
 # Read-Host -AsSecureString keeps the typed characters out of the console and out of the history.
 # It is asked twice because there is no way to display what was typed to confirm it afterwards.
-$sec1 = Read-Host -AsSecureString 'Password (not echoed)'
-$sec2 = Read-Host -AsSecureString 'Password again'
-$p1 = (New-Object System.Net.NetworkCredential('', $sec1)).Password
-$p2 = (New-Object System.Net.NetworkCredential('', $sec2)).Password
-if (-not $p1) { Write-Host 'Empty password, nothing stored.'; exit 1 }
-if ($p1 -ne $p2) { Write-Host 'The two passwords differ, nothing stored.'; exit 1 }
+# A mismatch RE-ASKS instead of voiding the run.  The first version printed "The two passwords
+# differ, nothing stored" and exited, which from the outside looked like nothing had been checked at
+# all: reported 2026-10-24 by a user who typed them differently and only found out the run had been
+# discarded when the machine kept using the old credential.  Three attempts, then give up loudly.
+$MAX_ATTEMPTS = 3
+$p1 = $null
+$sec1 = $null
+for ($attempt = 1; $attempt -le $MAX_ATTEMPTS; $attempt++) {
+    if ($attempt -gt 1) { Write-Host ('Try again (' + $attempt + '/' + $MAX_ATTEMPTS + ') - press Ctrl+C to abort.') }
+    $s1 = Read-Host -AsSecureString 'Password (not echoed)'
+    $s2 = Read-Host -AsSecureString 'Password again'
+    $q1 = (New-Object System.Net.NetworkCredential('', $s1)).Password
+    $q2 = (New-Object System.Net.NetworkCredential('', $s2)).Password
+    if (-not $q1) {
+        Write-Host 'Empty password - not stored on this attempt.'
+        $q1 = $null; $q2 = $null; $s1 = $null; $s2 = $null
+        continue
+    }
+    if ($q1 -eq $q2) {
+        $p1 = $q1
+        $sec1 = $s1
+        $q1 = $null; $q2 = $null; $s1 = $null; $s2 = $null
+        break
+    }
+    Write-Host 'The two entries differ - nothing stored yet.'
+    $q1 = $null; $q2 = $null; $s1 = $null; $s2 = $null
+}
+if (-not $p1) {
+    Write-Host ''
+    Write-Host ('Gave up after ' + $MAX_ATTEMPTS + ' attempts - NOTHING was stored.')
+    Write-Host 'Any credential already on this machine is still in place. Run this script again when ready.'
+    exit 1
+}
+$p2 = $p1
+$sec2 = $sec1
 
 try {
     Set-Content -Path $UserFile -Value $account -Encoding UTF8 -NoNewline
