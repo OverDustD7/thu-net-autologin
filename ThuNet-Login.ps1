@@ -22,7 +22,7 @@
 #   ThuNet-Login.ps1 -Once                        log in once if the link is not authenticated
 #   ThuNet-Login.ps1 -Watch -IntervalSeconds 60   stay resident, re-login whenever the link drops
 #   ThuNet-Login.ps1 -Watch -MaxRuns 0            same, unlimited (0 = no limit; the default)
-#   ThuNet-Login.ps1 -Status                      report stored account + link state, change nothing
+#   ThuNet-Login.ps1 -Status                      diagnostic: reads credentials/network/history, may write log
 #   ThuNet-Login.ps1 -SelfTest                    verify the SRBX1 encoder against a fixed vector
 #   ThuNet-Login.ps1 -TestLogin                   attempt one login and print the raw response
 #
@@ -44,6 +44,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+function Initialize-Runtime {
 # ---------------------------------------------------------------- paths and layout
 # Install root holds machine-local state; credentials and logs live in their own subdirectories
 # so that a caller can point -CredentialDir at an existing set (for example a directory another
@@ -115,6 +116,13 @@ $script:AcidWriteFile = Resolve-AcidFile $script:CredDir -ForWrite
 if (-not $script:AcidWriteFile) { $script:AcidWriteFile = Join-Path $script:StateDir 'ThuNet-ac_id.txt' }
 $script:LogFile  = Join-Path $script:LogDir  'thunet-login.log'
 
+    # TLS 1.2 is the floor.  Do not enable 1.0/1.1 and do not disable certificate validation.
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
+    [System.Net.ServicePointManager]::DefaultConnectionLimit = 8
+}
+
+
 $script:PortalHost = 'login.tsinghua.edu.cn'
 $script:AuthHost   = 'auth4.tsinghua.edu.cn'
 
@@ -148,13 +156,7 @@ function Write-Log([string]$msg) {
     } catch { }
 }
 
-# TLS 1.1/1.2 explicitly: PowerShell 5.1 on an unpatched .NET defaults to SSL3/TLS1.0, which the
-# portal refuses.  The certificate callback accepts the campus chain, which is not in the machine
-# store on a freshly installed box; the traffic carries no secret beyond the account itself, and
-# the request is what the vendor's own client sends.
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-[System.Net.ServicePointManager]::DefaultConnectionLimit = 8
+
 
 # ---------------------------------------------------------------- which local address to bind to
 # The portal request has to leave through the wired NIC.  get_challenge echoes back the address
@@ -332,6 +334,31 @@ function ConvertTo-JsonLiteral([string]$s) {
 }
 
 # ---------------------------------------------------------------- credentials (read-only)
+# ---------------------------------------------------------------- self-test (offline only)
+# Runs only the fixed SRBX1 vector.  It does not create the install/credential/log directories,
+# does not read stored credentials or browser history, does not enumerate interfaces and does not
+# touch the network.
+if ($SelfTest) {
+    $SelfTestToken = 'ae48995cb0a006baddaff24bb8081df3b905afa6381ad498d6a3674ac2110aaf'
+    $SelfTestInfo  = '{"username": "testuser", "password": "testpass", "ip": "59.66.18.167", "acid": 1, "enc_ver": "srun_bx1"}'
+    $SelfTestExpectedHex  = '94aca64aba9027ba06b0c67399e92be1950dd5aa0fb88ab65d813481500e70fcead4dbf6dc415a8a7d5393814cfb4d0387a03db7ea3168cdd9408e66be0aea2be19d6d86639f013208379246c9a9a9cb58f12fab891eb5222b9c8a837f0abd1de058146c408eda9247d660e7'
+    $SelfTestExpectedInfo = '{SRBX1}p8xUmld+RE/Cb91zUrYlD1H0jO/gK2dIcZPtSuLyMgzdj0wI7PiOXqjFYDi9QttJTBL5fQ/6O971+2eUwSld8QCnWZ1kqvPxoJrmhbU3dMfZ4mQlXhBj2XKMX/0AoltnDiSHWPoyI3RNjUJq'
+
+    $enc  = Invoke-XEncode -Msg ([System.Text.Encoding]::UTF8.GetBytes($SelfTestInfo)) -Key ([System.Text.Encoding]::UTF8.GetBytes($SelfTestToken))
+    $mine = '{SRBX1}' + (ConvertTo-WeirdBase64 $enc)
+    $hex  = Get-Hex $enc
+    $ok   = ($hex -eq $SelfTestExpectedHex) -and ($mine -eq $SelfTestExpectedInfo)
+
+    Write-Out 'SelfTest: SRBX1 fixed vector (offline)'
+    Write-Out ('encoder hex    : ' + $hex)
+    Write-Out ('expected hex   : ' + $SelfTestExpectedHex)
+    if ($ok) { Write-Out 'MATCH: encoder is byte-identical to the reference implementation' }
+    else     { Write-Out 'MISMATCH: encoder differs from the reference implementation' }
+    return
+}
+
+Initialize-Runtime
+
 function Test-CredentialPresent {
     return ((Test-Path $script:UserFile) -and (Test-Path $script:PassFile))
 }
@@ -756,37 +783,10 @@ function Repair-Once {
 # ---------------------------------------------------------------- entry points
 $script:BindIp = Get-WiredAddress
 
-if ($SelfTest) {
-    # Read-only.  Compares the encoder against a vector recorded from the Python reference
-    # implementation (github.com/WhymustIhaveaname/TsinghuaTunet, connect.py) so that the check
-    # needs no Python, no module and no network - it runs on a bare PowerShell 5.1 box.
-    # The vector was produced by that oracle with exactly this token and this info string; if the
-    # two outputs below stop matching the constants, the encoder was changed.
-    $SelfTestToken = 'ae48995cb0a006baddaff24bb8081df3b905afa6381ad498d6a3674ac2110aaf'
-    $SelfTestInfo  = '{"username": "testuser", "password": "testpass", "ip": "59.66.18.167", "acid": 1, "enc_ver": "srun_bx1"}'
-    $SelfTestExpectedHex  = '94aca64aba9027ba06b0c67399e92be1950dd5aa0fb88ab65d813481500e70fcead4dbf6dc415a8a7d5393814cfb4d0387a03db7ea3168cdd9408e66be0aea2be19d6d86639f013208379246c9a9a9cb58f12fab891eb5222b9c8a837f0abd1de058146c408eda9247d660e7'
-    $SelfTestExpectedInfo = '{SRBX1}p8xUmld+RE/Cb91zUrYlD1H0jO/gK2dIcZPtSuLyMgzdj0wI7PiOXqjFYDi9QttJTBL5fQ/6O971+2eUwSld8QCnWZ1kqvPxoJrmhbU3dMfZ4mQlXhBj2XKMX/0AoltnDiSHWPoyI3RNjUJq'
-
-    $enc  = Invoke-XEncode -Msg ([System.Text.Encoding]::UTF8.GetBytes($SelfTestInfo)) -Key ([System.Text.Encoding]::UTF8.GetBytes($SelfTestToken))
-    $mine = '{SRBX1}' + (ConvertTo-WeirdBase64 $enc)
-    $hex  = Get-Hex $enc
-
-    $ok = ($hex -eq $SelfTestExpectedHex) -and ($mine -eq $SelfTestExpectedInfo)
-    Write-Out ('credential dir : ' + $script:CredDir)
-    Write-Out ('credential set : ' + $(if (Test-CredentialPresent) { 'present (account file + DPAPI password file)' } else { 'NOT set (run Set-ThuNetCredential.ps1)' }))
-    Write-Out ('wired address  : ' + $(if ($script:BindIp) { $script:BindIp } else { '(none found)' }))
-    Write-Out ('ac_id          : ' + (Get-AcId))
-    Write-Out ('encoder hex    : ' + $hex)
-    Write-Out ('encoder info   : ' + $mine)
-    Write-Out ('expected hex   : ' + $SelfTestExpectedHex)
-    Write-Out ('expected info  : ' + $SelfTestExpectedInfo)
-    if ($ok) { Write-Out 'MATCH: encoder is byte-identical to the reference implementation' }
-    else     { Write-Out 'MISMATCH: encoder differs from the reference implementation' }
-    return
-}
-
 if ($Status) {
-    # Read-only: reports stored account and link state, changes nothing, logs nothing to disk.
+    # Diagnostic, not offline and not side-effect free: it reads stored credentials, enumerates
+    # interfaces, probes the network, reads browser history through ac_id discovery, and may write
+    # the local log.  It does not log in.
     if (Test-CredentialPresent) {
         $u = Get-StoredUser
         $sec = $null

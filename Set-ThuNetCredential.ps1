@@ -4,8 +4,9 @@
 # them and never writes; if it cannot find them it tells the user to run this script.
 #
 # HOW THE PASSWORD IS STORED
-#   The account name goes into a plain text file (it is not a secret, and it has to be readable
-#   without any key so that -Show and the login script can display it).
+#   The account name is personal information, not a password, but it still needs protection.  It
+#   goes into a plain text file only because -Show and the login script must read it without a key;
+#   restrict that file's permissions and never publish or copy it to an untrusted location.
 #   The password is encrypted with Windows DPAPI and written to a separate file as a hex string.
 #   ConvertFrom-SecureString without a -Key encrypts with ProtectedData at the CurrentUser scope,
 #   which is exactly the property this design wants:
@@ -21,7 +22,7 @@
 #
 # USAGE
 #   Set-ThuNetCredential.ps1                    ask for account and password, store them
-#   Set-ThuNetCredential.ps1 -User 2021000000  pre-fill the account name, still ask for password
+#   Set-ThuNetCredential.ps1 -User {{ACCOUNT}}  pre-fill the account name, still ask for password
 #   Set-ThuNetCredential.ps1 -Show             show the account name and whether a password is set
 #   Set-ThuNetCredential.ps1 -Remove           delete the stored credential files
 #   Set-ThuNetCredential.ps1 -CredentialDir <path>

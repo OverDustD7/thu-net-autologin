@@ -41,6 +41,12 @@ creds/
 logs/
 state/
 
+# ---- internal records ----------------------------------------------------------
+# Migration/audit notes describe one machine's move and are not part of the tool.  The leading
+# slash anchors this at the repository root, so a future "docs/.migration/" style directory is
+# still tracked normally.
+/.migration/
+
 # ---- editor and OS noise -------------------------------------------------------
 .vscode/
 .idea/
